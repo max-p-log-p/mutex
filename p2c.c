@@ -24,6 +24,7 @@ int32_t
 main(int32_t argc, char * const *argv)
 {
 	uint8_t r;
+	uint64_t i;
 	int8_t buf[WRITE_REQ_LEN];
 
 	if (argc != ARGS_LEN)
@@ -31,29 +32,36 @@ main(int32_t argc, char * const *argv)
 
 	srand(time(NULL));
 
+	writeReq[PEERTYPE] = CLIENT;
 	writeReq[CLIENT_ID] = argv[ID][0] - '0';
 
-	/* Enquiry */
-	r = rand() % NUM_SERVERS;
-	if ((servers[r].fd = createSocket(argv[r + 1], SERVICE, 0)) < 0)
-		err(1, "createSocket");
-	if (writeSocket(servers[r].fd, enqReq, sizeof(enqReq)) != sizeof(enqReq))
-		err(1, "writeSocket");
-	readSocket(servers[r].fd, buf, sizeof(enqReply), sizeof(enqReply));
-	printf("buf: %d\n", buf[MAX_FILE]);
+	for (i = 0; i < 100; ++i) {
+		/* Enquiry */
+		r = rand() % NUM_SERVERS;
+		if ((servers[r].fd = createSocket(argv[r + 1], SERVICE, 0)) < 0)
+			err(1, "createSocket");
+		if (writeSocket(servers[r].fd, enqReq, sizeof(enqReq)) != sizeof(enqReq))
+			err(1, "writeSocket");
+		readSocket(servers[r].fd, buf, sizeof(enqReply), sizeof(enqReply));
 
-	maxFile = buf[MAX_FILE];
+		maxFile = buf[MAX_FILE];
 
-	/* Write */
-	r = rand() % NUM_SERVERS;
-	if ((servers[r].fd = createSocket(argv[r + 1], SERVICE, 0)) < 0)
-		err(1, "createSocket");
-	writeReq[FILENAME] = rand() % maxFile;
-	writeReq[PEERTYPE] = CLIENT;
-	if (writeSocket(servers[r].fd, writeReq, sizeof(writeReq)) != sizeof(writeReq))
-		err(1, "writeSocket");
-	readSocket(servers[r].fd, buf, sizeof(writeReply), sizeof(writeReply));
-	printf("%d\n", writeReq[FILENAME]);
+		/* Write */
+		r = rand() % NUM_SERVERS;
+		if ((servers[r].fd = createSocket(argv[r + 1], SERVICE, 0)) < 0)
+			err(1, "createSocket");
+		writeReq[FILENAME] = rand() % maxFile;
+		writeReq[CLOCK] = p2clock++;
+		if (writeSocket(servers[r].fd, writeReq, sizeof(writeReq)) != sizeof(writeReq))
+			err(1, "writeSocket");
+		readSocket(servers[r].fd, buf, sizeof(writeReply), sizeof(writeReply));
+		fileCount[writeReq[FILENAME]]++;
+		
+		usleep(rand() % 150);
+	}
+
+	for (i = 0; i < NUM_FILES; ++i)
+		printf("%ld: %ld\n", i, fileCount[i] * 9);
 
 	return 0;
 }

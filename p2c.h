@@ -10,3 +10,4 @@ struct server {
 } servers[NUM_SERVERS];
 
 int32_t maxFile;
+uint64_t fileCount[NUM_FILES];
