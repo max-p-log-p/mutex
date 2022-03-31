@@ -3,10 +3,10 @@
 #define NUM_CLIENTS 5
 #define NUM_FILES NUM_CLIENTS
 
-uint64_t clock;
+uint64_t p2clock;
 
 enum PeerTypes { CLIENT, SERVER };
-enum WriteRequest { PEERTYPE, FILENAME, CLIENT_ID, CLOCK };
+enum WriteRequest { PEERTYPE = 0, FILENAME, CLIENT_ID, CLOCK };
 enum EnquireReply { MAX_FILE };
 
 #define WRITE_DATA_LEN (sizeof(uint8_t) + sizeof(uint64_t))

@@ -1,8 +1,8 @@
 #include "proc.h"
 
-#define NUM_SERVERS 2 /* exclude self */
+#define NUM_SERVERS 3 // /* exclude self */
 
-enum Args { PROG_NAME = 0, ADDRESS1, ADDRESS2, PATH, ARGS_LEN };
+enum Args { PROG_NAME = 0, ADDRESS0, ADDRESS1, ADDRESS2, PATH, ARGS_LEN };
 
 /* ENQUIRY */
 struct server {

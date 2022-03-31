@@ -17,7 +17,7 @@ void broadcast(struct server [], int8_t [], size_t);
 void
 usage()
 {
-	fprintf(stderr, "usage: p2s address1 address2 path\n");
+	fprintf(stderr, "usage: p2s address0 address1 address2 path\n");
 	exit(1);
 }
 
@@ -53,7 +53,7 @@ main(int argc, char * const *argv)
 	for (i = 0; i < NUM_SERVERS; ++i)
 		servers[i].addr = argv[i + 1];
 
-	if ((sockfd = createSocket(NODE, SERVICE, 1)) < 0)
+	if ((sockfd = createSocket(servers[0].addr, SERVICE, 1)) < 0)
 		err(1, "createSocket");
 
 	net_listen(sockfd);
@@ -82,7 +82,7 @@ main(int argc, char * const *argv)
 			}
 
 			/* append to file */
-			if ((write(files[buf[0]], buf + 1, WRITE_DATA_LEN)) != WRITE_DATA_LEN)
+			if ((write(files[buf[FILENAME]], buf + CLIENT_ID, WRITE_DATA_LEN)) != WRITE_DATA_LEN)
 				err(1, "write");
 
 			/* write reply */
@@ -92,6 +92,10 @@ main(int argc, char * const *argv)
 			printf("buf: %s\n", buf);
 			break;
 		}
+
+		/* Reset buf */
+		for (i = 0; i < sizeof(buf); ++i)
+			buf[i] = 0;
 	}
 
 	return 0;
@@ -102,9 +106,8 @@ broadcast(struct server servers[], int8_t buf[], size_t len)
 {
 	uint8_t i;
 
-	i = 0;
+	i = 1; /* exclude self */
 	while (i < NUM_SERVERS) {
-		puts(servers[i].addr);
 		servers[i].fd = createSocket(servers[i].addr, SERVICE, 0);
 		if (servers[i].fd < 0)
 			continue;

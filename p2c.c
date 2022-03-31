@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <string.h>
+#include <time.h>
 
 #include "net.h"
 #include "p2c.h"
@@ -27,6 +28,8 @@ main(int32_t argc, char * const *argv)
 
 	if (argc != ARGS_LEN)
 		usage();
+
+	srand(time(NULL));
 
 	writeReq[CLIENT_ID] = argv[ID][0] - '0';
 
