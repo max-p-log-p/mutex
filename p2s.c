@@ -1,116 +1,318 @@
+#define _GNU_SOURCE /* mkostemp */
+#include <arpa/inet.h>
 #include <sys/stat.h>
+#include <sys/socket.h>
 
+#include <err.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "net.h"
 #include "p2s.h"
 
-#define SERVICE "1025"
 #define NODE NULL /* wildcard address */
+#define MODE S_IRWXU
 
-void usage();
-int main(int, char * const *);
-void broadcast(struct server [], int8_t [], size_t);
+void pthreads_create(pthread_t [], void *(*)(void *), size_t);
+void broadcast(struct Msg);
+void setTime(uint32_t);
+void *enquireReply(void *);
+void *p2write(void *);
+void *invoke(void *);
+void *count(void *);
+void *writeReply(void *);
 
 void
-usage()
+pthreads_create(pthread_t t[], void *(*f)(void *), size_t len)
 {
-	fprintf(stderr, "usage: p2s address0 address1 address2 path\n");
-	exit(1);
+	uint64_t i;
+	for (i = 0; i < len; ++i)
+		if (pthread_create(&t[i], NULL, f, (void *)&i))
+			err(1, "pthread_create");
 }
 
-int
-main(int argc, char * const *argv)
+void
+setTime(uint32_t time)
 {
-	int32_t afd, sockfd;
-	uint64_t i;
-	uint8_t j;
+	pthread_mutex_lock(&mutexes[TIME]);
+	p2time = (time > p2time) ? time + 1 : p2time + 1;
+	pthread_mutex_unlock(&mutexes[TIME]);
+}
+
+int32_t
+main(int32_t argc, char * const *argv)
+{
+	uint64_t i, tmpid;
+	uint32_t j;
+	char file[sizeof(j) * 2]; /* size in hex */
 	char path[PATH_MAX] = { 0 };
-	int8_t buf[sizeof(writeReq)];
+	struct Msg req;
 
 	if (argc != ARGS_LEN)
-		usage();
+		usage(USAGE_STR);
 
-	if (strlen(argv[PATH]) + FILENAME_LEN >= sizeof(path))
+	/* Get ID */
+	if ((tmpid = strtoul(argv[ID], NULL, 10)) > NUM_SERVERS)
+		errx(1, "id > %d", NUM_SERVERS);
+	id = req.h.id = (uint32_t)tmpid;
+
+	/* Get servers */
+	getHostnames(argv[SERVER_FILE], addrs, LEN(addrs));
+
+	if (strlen(argv[PATH]) + sizeof(file) >= sizeof(path))
 		errx(1, "path too long");
 
 	for (i = 0; argv[PATH][i] != '\0'; ++i)
 		path[i] = argv[PATH][i];
 
-	if (mkdir(path, S_IRWXU) && errno != EEXIST)
+	if (argv[PATH][i - 1] != '/')
+		errx(1, "path must end with /");
+
+	if (mkdir(path, MODE) && errno != EEXIST)
 		err(1, "mkdir");
 
 	/* Create files */
-	path[i++] = '/';
 	for (j = 0; j < NUM_FILES; ++j) {
-		path[i] = j + '0';
-		if ((files[j] = creat(path, S_IRWXU)) < 0)
-			err(1, "open");
+		if (snprintf(file, sizeof(file), "%x", j) < 0)
+			err(1, "snprintf");
+		strncpy(path + i, file, sizeof(file));
+		if ((fds[i] = creat(path, S_IRWXU)) < 0)
+			err(1, "creat");
 	}
 
-	for (i = 0; i < NUM_SERVERS; ++i)
-		servers[i].addr = argv[i + 1];
+	/* Initialization */
+	for (i = 0; i < NUM_SERVERS - 1; ++i) {
+		for (j = 0; j < NUM_FILES; ++j) {
+			if (sem_init(&srvs[i].sem[j], 0, 0))
+				err(1, "sem_init");
+		}
+	}
 
-	if ((sockfd = createSocket(servers[0].addr, SERVICE, 1)) < 0)
-		err(1, "createSocket");
+	for (i = 0; i < NUM_MUTEXES; ++i)
+		if (pthread_mutex_init(&mutexes[i], NULL))
+			err(1, "pthread_mutex_init");
 
-	net_listen(sockfd);
+	for (i = 0; i < NUM_PORTS; ++i)
+		sockets[i] = listenSocket(addrs[id], PORT_STR[i]);
+
+	pthreads_create(enqRepliers, enquireReply, LEN(enqRepliers));
+	pthreads_create(invokers, invoke, LEN(invokers));
+	pthreads_create(writers, p2write, LEN(writers));
+	pthreads_create(counters, count, LEN(counters));
+	pthreads_create(wrRepliers, writeReply, LEN(wrRepliers));
+
+	for (;;)
+		;
+}
+
+/* reply to enquiries */
+void *
+enquireReply(void *i)
+{
+	int32_t afd;
+	struct Msg msg, reply;
+
+	reply.data = ENQ_REP;
+	reply.h.id = id;
 
 	for (;;) {
-		afd = net_accept(sockfd);
-		puts("Accept");
-		/* sockfd, buf, min, max */
-		switch (readSocket(afd, buf, sizeof(enqReq), sizeof(writeReq))) {
-		case sizeof(enqReq):
-			puts("ENQUIRY");
-			if (buf[0] == enqReq[0])
-				writeSocket(afd, enqReply, sizeof(enqReply));
-			break;
-		case sizeof(writeReq):
-			puts("WRITE");
-
-			/* check filename */
-			if (buf[FILENAME] < 0 || buf[FILENAME] >= NUM_FILES) 
-				continue;
-
-			/* broadcast write */
-			if (buf[PEERTYPE] == CLIENT) {
-				buf[PEERTYPE] = SERVER;
-				broadcast(servers, buf, sizeof(buf));
-			}
-
-			/* append to file */
-			if ((write(files[buf[FILENAME]], buf + CLIENT_ID, WRITE_DATA_LEN)) != WRITE_DATA_LEN)
-				err(1, "write");
-
-			/* write reply */
-			writeSocket(afd, writeReply, sizeof(writeReply));
-			break;
-		default:
-			printf("buf: %s\n", buf);
-			break;
-		}
-
-		/* Reset buf */
-		for (i = 0; i < sizeof(buf); ++i)
-			buf[i] = 0;
+		if ((afd = acceptSocket(sockets[EREQ_PORT])) < 0)
+			err(1, "accept: %d", *(int32_t *)i);
+		if (readSocket(afd, &msg) < sizeof(struct Msg))
+			err(1, "recv");
+		/* time is not updated because client time is not used */
+		printf("Enquiry from %d\n", msg.h.id);
+		writeSocket(afd, reply);
 	}
 
-	return 0;
+	return NULL;
+}
+
+/* invoke critical section */
+void *
+invoke(void *i)
+{
+	int32_t afd;
+	struct Msg msg;
+
+	for (;;) {
+		if ((afd = acceptSocket(sockets[C_WREQ_PORT])) < 0)
+			err(1, "accept: %d", *(int32_t *)i);
+		if (readSocket(afd, &msg) < sizeof(struct Msg))
+			err(1, "recv");
+
+		/* time is not updated because client time is not used */
+		printf("Req %d %d %d\n", msg.data, msg.h.id, msg.h.time);
+
+		if (msg.data > NUM_FILES)
+			errx(1, "invalid file");
+
+		/* client.num_requests <= 1 */
+		if (pos[msg.data] >= NUM_CLIENTS)
+			errx(1, "Too many requests");
+
+		deferred[msg.h.id] = afd;
+
+		/* add to queue */
+		if (pthread_mutex_lock(&mutexes[FIFO]))
+			err(1, "pthread_mutex_lock");
+
+		wrReqs[msg.data][pos[msg.data]++] = msg;
+
+		if (pthread_cond_broadcast(&conds[ENTER]))
+			err(1, "pthread_cond_signal");
+
+		if (pthread_mutex_unlock(&mutexes[FIFO]))
+			err(1, "pthread_mutex_unlock");
+
+	}
+	return NULL;
+}
+
+void *
+p2write(void *arg)
+{
+	uint32_t i;
+	int32_t fnum;
+	struct Header h;
+	struct Msg msg;
+
+	fnum = *(int32_t *)arg;
+
+	/* block until queue is not empty */
+	if (pthread_mutex_lock(&mutexes[COND]))
+		err(1, "pthread_mutex_lock");
+
+	while (pos[fnum] == 0)
+		if (pthread_cond_wait(&conds[ENTER], &mutexes[COND]))
+			err(1, "pthread_cond_wait");
+
+	if (pthread_mutex_unlock(&mutexes[COND]))
+		err(1, "pthread_mutex_unlock");
+
+	puts("broadcast");
+	/* broadcast write (request critical section) */
+	msg.data = fnum;
+	msg.h.id = id;
+	msg.h.time = p2time;
+	broadcast(msg);
+
+	/* enter critical section after all servers reply */
+	for (i = 0; i < NUM_SERVERS - 1; ++i)
+		sem_wait(&srvs[i].sem[fnum]);
+
+	if (pthread_mutex_lock(&mutexes[FIFO]))
+		err(1, "pthread_mutex_lock");
+
+	/* append to file and empty FIFO (optimization) */
+	for (i = 0; i < pos[fnum]; ++i) {
+		msg = wrReqs[fnum][i];
+		h = msg.h;
+
+		/* append to file */
+		if (write(fds[fnum], (void *)&h, sizeof(h)) != sizeof(h))
+			err(1, "write");
+
+		/* write deferred reply to client */
+		msg.data = WRITE_REP;
+		writeSocket(deferred[msg.h.id], msg);
+	}
+
+	/* Clear FIFO */
+	pos[fnum] = 0;
+
+	if (pthread_cond_broadcast(&conds[EXIT]))
+		err(1, "pthread_cond_broadcast");
+
+	if (pthread_mutex_unlock(&mutexes[FIFO]))
+		err(1, "pthread_mutex_unlock");
+
+	return NULL;
+}
+
+/* Count replies */
+void *
+count(void *i)
+{
+	int32_t afd;
+	struct Msg msg;
+
+	for (;;) {
+		if ((afd = acceptSocket(sockets[S_WREQ_PORT])) < 0)
+			err(1, "accept: %d", *(int32_t *)i);
+
+		if (readSocket(afd, &msg) < sizeof(struct Msg))
+			err(1, "recv");
+
+		setTime(msg.h.time);
+
+		printf("Reply Recv %d %d %d\n", msg.data, msg.h.id, msg.h.time);
+
+		if (msg.data >= NUM_FILES)
+			errx(1, "invalid file");
+
+		/* assume server sends <= 1 reply */
+		if (sem_post(&srvs[msg.h.id].sem[msg.data]))
+			err(1, "sem_post");
+	}
+
+	return NULL;
+}
+
+/* write replies */
+void *
+writeReply(void *i)
+{
+	int32_t afd;
+	struct Msg msg, reply;
+
+	for (;;) {
+		if ((afd = acceptSocket(sockets[WREP_PORT])) < 0)
+			err(1, "accept: %d", *(int32_t *)i);
+		if (readSocket(afd, &msg) < sizeof(struct Msg))
+			err(1, "recv");
+
+		setTime(msg.h.time);
+		printf("Reply Sent %d %d %d\n", msg.data, msg.h.id, msg.h.time);
+
+		/* lower ids have higher priority */
+		if (pos[msg.data] == 0 || (p2time > msg.h.time) || 
+			(p2time == msg.h.time && id > msg.h.id)) {
+
+			reply.data = WRITE_REP;
+			writeSocket(afd, reply);
+			continue;
+		}
+
+		/* Defer reply */
+		if (pthread_mutex_lock(&mutexes[COND]))
+			err(1, "pthread_mutex_lock");
+
+		while (pos[msg.data] > 0)
+			if (pthread_cond_wait(&conds[EXIT], &mutexes[COND]))
+				err(1, "pthread_cond_wait");
+
+		if (pthread_mutex_unlock(&mutexes[COND]))
+			err(1, "pthread_mutex_unlock");
+	}
+
+	return NULL;
 }
 
 void
-broadcast(struct server servers[], int8_t buf[], size_t len)
+broadcast(struct Msg req)
 {
-	uint8_t i;
+	uint64_t i;
 
-	i = 1; /* exclude self */
-	while (i < NUM_SERVERS) {
-		servers[i].fd = createSocket(servers[i].addr, SERVICE, 0);
-		if (servers[i].fd < 0)
+	for (i = 0; i < LEN(srvs); ++i) {
+		if (i == id)
 			continue;
-		writeSocket(servers[i++].fd, buf, len);
+		srvs[i].sfd = createSocket(addrs[i], PORT_STR[S_WREQ_PORT], 0);
+		writeSocket(srvs[i].sfd, req);
 	}
 }

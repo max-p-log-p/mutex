@@ -1,20 +1,29 @@
 #include <stdint.h>
 
+#define NUM_SERVERS 3
 #define NUM_CLIENTS 5
 #define NUM_FILES NUM_CLIENTS
+#define LEN(array) (sizeof(array) / sizeof(array[0]))
 
-static uint64_t p2clock;
+/* prevent overflow */
+#if NUM_FILES >= UINT32_MAX - 1
+#error "NUM_FILES is too large"
+#endif
 
-enum PeerTypes { CLIENT, SERVER };
-enum WriteRequest { PEERTYPE = 0, FILENAME, CLIENT_ID, CLOCK };
-enum EnquireReply { MAX_FILE };
+/* all files are in [0, NUM_FILES) */
+enum MsgData { ENQ_REP = NUM_FILES, ENQ_REQ, WRITE_REP };
+enum Ports { EREQ_PORT, C_WREQ_PORT, S_WREQ_PORT, WREP_PORT, NUM_PORTS };
 
-#define WRITE_DATA_LEN (sizeof(uint8_t) + sizeof(p2clock))
-#define WRITE_REQ_LEN (2 * sizeof(uint8_t) + WRITE_DATA_LEN)
+void usage(char *);
+void getHostnames(const char *, char [][HOST_NAME_MAX], size_t);
 
-static int8_t enqReq[1] = { 0 };
-static int8_t writeReq[WRITE_REQ_LEN] = { 0 };
+/* ports [0, 1024] require root privileges */
+static const char *PORT_STR[NUM_PORTS] = { 
+	[EREQ_PORT] = "1025", 
+	[C_WREQ_PORT] = "1026", 
+	[S_WREQ_PORT] = "1027", 
+	[WREP_PORT] = "1028", 
+};
 
-/* all files are named from [0, NUM_FILES) */
-static int8_t enqReply[1] = { NUM_FILES };
-static int8_t writeReply[1] = { 1 };
+static char addrs[NUM_SERVERS][HOST_NAME_MAX];
+static uint32_t p2time; /* clock */

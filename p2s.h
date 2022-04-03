@@ -1,16 +1,35 @@
+#include <limits.h>
+#include <pthread.h>
+#include <semaphore.h>
+
 #include "proc.h"
 
-#define NUM_SERVERS 3 // /* exclude self */
+enum Args { PROG_NAME = 0, ID, PATH, SERVER_FILE, ARGS_LEN };
+enum Mutexes { TIME, FIFO, COND, NUM_MUTEXES };
+enum Conds { ENTER, EXIT, NUM_CONDS };
 
-enum Args { PROG_NAME = 0, ADDRESS0, ADDRESS1, ADDRESS2, PATH, ARGS_LEN };
+#define USAGE_STR "p2s id path serverFile"
 
-/* ENQUIRY */
 struct server {
-	int32_t fd;
-	char *addr;
-} servers[NUM_SERVERS];
+	int32_t sfd;
+	sem_t sem[NUM_FILES];
+} srvs[NUM_SERVERS - 1]; /* exclude self */
 
-int32_t files[NUM_FILES]; /* fds */
+/* FIFO */
+struct Msg wrReqs[NUM_FILES][NUM_CLIENTS];
+static int32_t deferred[NUM_CLIENTS];
+static uint32_t pos[NUM_FILES];
 
-/* '/' + [0-4] */
-#define FILENAME_LEN (2 * sizeof(uint8_t))
+static int32_t sockets[NUM_PORTS];
+static uint32_t id;
+static int32_t fds[NUM_FILES];
+static pthread_t enqRepliers[NUM_CLIENTS];
+static pthread_t invokers[NUM_CLIENTS];
+static pthread_t writers[NUM_FILES];
+
+/* exclude self */
+static pthread_t counters[NUM_SERVERS - 1];
+static pthread_t wrRepliers[NUM_SERVERS - 1];
+
+static pthread_mutex_t mutexes[NUM_MUTEXES];
+static pthread_cond_t conds[NUM_CONDS];

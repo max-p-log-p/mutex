@@ -1,13 +1,14 @@
+#include <limits.h>
+
 #include "proc.h"
 
-enum Args { PROG_NAME = 0, ADDRESS1, ADDRESS2, ADDRESS3, ID, ARGS_LEN };
+enum Args { PROG_NAME = 0, ID, SERVER_FILE, ARGS_LEN };
 
-#define NUM_SERVERS 3
+#define MAX_SLEEP 100 /* microseconds */
+#define USAGE_STR "p2c id serverFile"
 
-/* ENQUIRY */
 struct server {
-	int32_t fd;
+	int32_t sfd, numFiles;
 } servers[NUM_SERVERS];
 
-int32_t maxFile;
-uint64_t fileCount[NUM_FILES];
+static uint64_t fileCount[NUM_FILES];

@@ -1,64 +1,68 @@
-#include <sys/stat.h>
-
-#include <errno.h>
-#include <fcntl.h>
-#include <string.h>
+#include <err.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <time.h>
+#include <unistd.h>
 
 #include "net.h"
 #include "p2c.h"
 
-#define SERVICE "1025"
-
-void usage();
-int32_t main(int32_t, char * const *);
-
-void
-usage()
-{
-	fprintf(stderr, "usage: p2c address1 address2 address3 id\n");
-	exit(1);
-}
-
 int32_t
 main(int32_t argc, char * const *argv)
 {
-	uint8_t r;
-	uint64_t i;
-	int8_t buf[WRITE_REQ_LEN];
+	uint64_t i, id, r;
+	struct Msg req, reply;
 
 	if (argc != ARGS_LEN)
-		usage();
+		usage(USAGE_STR);
 
+	/* when tloc is NULL, time() can't fail */
 	srand(time(NULL));
 
-	writeReq[PEERTYPE] = CLIENT;
-	writeReq[CLIENT_ID] = argv[ID][0] - '0';
+	if ((id = strtoul(argv[ID], NULL, 10)) > NUM_CLIENTS)
+		errx(1, "id > %d", NUM_CLIENTS);
+	req.h.id = (uint32_t)id;
 
-	for (i = 0; i < 100; ++i) {
-		/* Enquiry */
-		r = rand() % NUM_SERVERS;
-		if ((servers[r].fd = createSocket(argv[r + 1], SERVICE, 0)) < 0)
+	req.data = ENQ_REQ;
+
+	getHostnames(argv[SERVER_FILE], addrs, LEN(addrs));
+
+	/* Enquiry Request */
+	for (i = 0; i < NUM_SERVERS; ++i) {
+		/* increment clock */
+		req.h.time = p2time++;
+		if ((servers[i].sfd = createSocket(addrs[i], PORT_STR[EREQ_PORT], 0)) < 0)
 			err(1, "createSocket");
-		if (writeSocket(servers[r].fd, enqReq, sizeof(enqReq)) != sizeof(enqReq))
+		if (writeSocket(servers[i].sfd, req) < 0)
 			err(1, "writeSocket");
-		readSocket(servers[r].fd, buf, sizeof(enqReply), sizeof(enqReply));
-
-		maxFile = buf[MAX_FILE];
-
-		/* Write */
-		r = rand() % NUM_SERVERS;
-		if ((servers[r].fd = createSocket(argv[r + 1], SERVICE, 0)) < 0)
-			err(1, "createSocket");
-		writeReq[FILENAME] = rand() % maxFile;
-		writeReq[CLOCK] = p2clock++;
-		if (writeSocket(servers[r].fd, writeReq, sizeof(writeReq)) != sizeof(writeReq))
-			err(1, "writeSocket");
-		readSocket(servers[r].fd, buf, sizeof(writeReply), sizeof(writeReply));
-		fileCount[writeReq[FILENAME]]++;
-		
-		usleep(rand() % 150);
+		if (readSocket(servers[i].sfd, &reply) < sizeof(struct Msg))
+			err(1, "recv");
+		servers[i].numFiles = reply.data;
+		printf("numFiles: %d\n", reply.data);
 	}
+
+	/* probability of (1 / RAND_MAX) of terminating */
+	do {
+		r = rand();
+		i = r % NUM_SERVERS;
+
+		/* Write Request */
+		if ((servers[i].sfd = createSocket(addrs[i], PORT_STR[C_WREQ_PORT], 0)) < 0)
+			err(1, "createSocket");
+
+		req.data = rand() % servers[i].numFiles;
+		req.h.time = p2time++;
+
+		if (writeSocket(servers[i].sfd, req) < 0)
+			err(1, "writeSocket");
+
+		if (readSocket(servers[i].sfd, &reply) < sizeof(struct Msg))
+			err(1, "recv");
+
+		++fileCount[req.data];
+		
+		usleep(rand() % MAX_SLEEP);
+	} while (r < RAND_MAX);
 
 	for (i = 0; i < NUM_FILES; ++i)
 		printf("%ld: %ld\n", i, fileCount[i] * 9);

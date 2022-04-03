@@ -1,14 +1,21 @@
-#include <err.h>
-#include <limits.h>
-#include <semaphore.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
+#include <stdint.h>
 
-extern int readSocket(int, int8_t [], size_t, size_t);
-extern ssize_t writeSocket(int, const int8_t *, size_t);
-extern int createSocket(const char *, const char *, int);
-extern void net_listen(int);
-extern int net_accept(int);
+#if NUM_SERVERS > UINTMAX_32 || NUM_CLIENTS > UINTMAX_32
+#error "id too small (uint32_t)"
+#endif
+
+struct Header {
+	uint32_t id;
+	uint32_t time;
+} __attribute__((packed));
+
+struct Msg {
+	struct Header h;
+	uint32_t data;
+} __attribute__((packed));
+
+extern size_t readSocket(int32_t, struct Msg *);
+extern ssize_t writeSocket(int32_t, struct Msg);
+extern int32_t createSocket(const char *, const char *, int32_t);
+extern int32_t listenSocket(const char *, const char *);
+extern int32_t acceptSocket(int32_t);

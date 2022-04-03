@@ -1,51 +1,71 @@
-#include <sys/socket.h>
-#include <sys/stat.h>
-#include <netinet/in.h>
-
+#include <err.h>
 #include <errno.h>
-#include <fcntl.h>
 #include <netdb.h>
-#include <poll.h>
+#include <stddef.h>
+#include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "net.h"
 
-int
-readSocket(int sockfd, int8_t buf[], size_t minlen, size_t maxlen)
+size_t
+readSocket(int32_t sockfd, struct Msg *msg)
 {
 	ssize_t nr;
-	size_t pos;
+	size_t i;
+	uint8_t buf[sizeof(struct Msg)];
+	struct Msg *recvd;
 
-	// printf("readSocket: %d\n", sockfd);
+	for (i = 0; i < sizeof(buf); i += nr) {
+		if ((nr = recv(sockfd, buf + i, sizeof(buf) - i, 0)) > 0)
+			continue;
 
-	nr = 0;
-	pos = 0;
-
-	while (pos < minlen) {
-		if ((nr = recv(sockfd, buf + pos, maxlen - pos, 0)) <= 0)
-			err(1, "recv");
-		pos += nr;
+		switch (errno) {
+		case EAGAIN:
+#if EWOULDBLOCK != EAGAIN
+		case EWOULDBLOCK:
+#endif
+		case EINTR:
+			warn("recv failed");
+			nr = 0;
+			break;
+		default:
+			return i;
+		}
 	}
 
-	return nr;
+	recvd = (struct Msg *)buf;
+	/*
+	msg->h.id = ntohl(recvd->h.id);
+	msg->data = ntohl(recvd->data);
+	msg->h.time = ntohl(recvd->h.time);
+	*/
+
+	msg->h.id = recvd->h.id;
+	msg->data = recvd->data;
+	msg->h.time = recvd->h.time;
+
+	printf("readSocket %d %d %d\n", recvd->h.id, recvd->data, recvd->h.time);
+
+	return i;
 }
 
 ssize_t
-writeSocket(int sockfd, const int8_t *buf, size_t len)
+writeSocket(int sockfd, struct Msg req)
 {
-	ssize_t nw;
+	/*
+	uint32_t buf[sizeof(struct Msg)/ sizeof(uint32_t)];
 
-	// printf("writeSocket: %ld\n", len);
-	nw = send(sockfd, buf, len, 0);
-
-	// printf("writeSocket: %d %s\n", sockfd, buf);
-
-	return nw;
+	buf[0] = htonl(req.h.id);
+	buf[1] = htonl(req.h.time);
+	buf[2] = htonl(req.data);
+	*/
+	return send(sockfd, &req, sizeof(req), 0);
 }
 
 /* returns socket file descriptor */
 int
-createSocket(const char *node, const char *service, int lflag)
+createSocket(const char *node, const char *service, int32_t lflag)
 {
 	int ecode, optval, serrno, sockfd;
 	struct addrinfo *cur, hints, *res;
@@ -95,25 +115,44 @@ createSocket(const char *node, const char *service, int lflag)
 	return sockfd;
 }
 
-void
-net_listen(int sockfd)
+int32_t
+listenSocket(const char *node, const char *service)
 {
+	int32_t sockfd;
+
+	if ((sockfd = createSocket(node, service, 1)) < 0)
+		err(1, "createSocket");
+
 	if (listen(sockfd, SOMAXCONN))
 		err(1, "listen");
+
+	return sockfd;
 }
 
 /* return the accepted file descriptor */
-int
-net_accept(int sockfd)
+int32_t
+acceptSocket(int32_t sockfd)
 {
-	int afd;
+	int32_t afd;
 	socklen_t addrlen;
 	struct sockaddr_storage addr;
 
 	addrlen = sizeof(addr);
 
-	if ((afd = accept(sockfd, (struct sockaddr *)&addr, &addrlen)) < 0)
-		err(1, "accept");
+	while ((afd = accept(sockfd, (struct sockaddr *)&addr, &addrlen)) < 0) {
+		switch (errno) {
+		case EAGAIN:
+#if EWOULDBLOCK != EAGAIN
+		case EWOULDBLOCK:
+#endif
+		case ECONNABORTED:
+		case EINTR:
+			warn("accept failed");
+			break;
+		default:
+			return -1;
+		}
+	}
 
 	return afd;
 }
