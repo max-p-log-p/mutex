@@ -38,6 +38,16 @@ pthreads_create(struct thread t[], void *(*f)(void *), size_t len)
 }
 
 void
+pthreads_join(struct thread t[], size_t len)
+{
+	uint64_t i;
+	for (i = 0; i < len; ++i) {
+		if (pthread_join(t[i].pthread, NULL))
+			warn("pthread_join");
+	}
+}
+
+void
 setTime(uint32_t time)
 {
 	pthread_mutex_lock(&mutexes[TIME]);
@@ -108,11 +118,17 @@ main(int32_t argc, char * const *argv)
 	pthreads_create(wrRepliers, writeReply, LEN(wrRepliers));
 
 	/* wait for last thread */
-	pthread_join(wrRepliers[LEN(wrRepliers) - 1].pthread, NULL);
+	pthreads_join(enqRepliers, LEN(enqRepliers));
+	pthreads_join(invokers, LEN(invokers));
+	pthreads_join(writers, LEN(writers));
+	pthreads_join(counters, LEN(counters));
+	pthreads_join(wrRepliers, LEN(wrRepliers));
 
 	/* close sockets */
 	for (i = 0; i < NUM_PORTS; ++i)
 		close(sockets[i]);
+
+	return 0;
 }
 
 /* reply to enquiries */
@@ -229,7 +245,7 @@ p2write(void *arg)
 			printf("%d %d ", fds[fnum], fnum);
 			printMsg("append to file:", msg);
 			/* append to file */
-			if (dprintf(fds[fnum], "%d %d", h.id, h.time) < 0)
+			if (dprintf(fds[fnum], "%d %d\n", h.id, h.time) < 0)
 				err(1, "dprintf");
 
 			/* write deferred reply to client */

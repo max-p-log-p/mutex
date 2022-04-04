@@ -61,14 +61,14 @@ main(int32_t argc, char * const *argv)
 			err(1, "recv");
 		printMsg("reply: ", reply);
 
-		++fileCount[req.data];
+		fileCount[req.data] += printf("%d %d\n", req.h.id, req.h.time);
 		
-		usleep(rand() % MAX_SLEEP);
-	} while (r > RAND_MAX / 256);
+		sleep(rand() % MAX_SLEEP);
+	} while (r > RAND_MAX / 128);
 
-	puts("sums");
+	puts("bytes written");
 	for (i = 0; i < NUM_FILES; ++i)
-		printf("%ld: %ld\n", i, fileCount[i] * 3);
+		printf("%ld: %d\n", i, fileCount[i]);
 
 	return 0;
 }
