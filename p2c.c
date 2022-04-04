@@ -59,14 +59,16 @@ main(int32_t argc, char * const *argv)
 
 		if (readSocket(servers[i].sfd, &reply) < sizeof(struct Msg))
 			err(1, "recv");
+		printMsg("reply: ", reply);
 
 		++fileCount[req.data];
 		
 		usleep(rand() % MAX_SLEEP);
-	} while (r < RAND_MAX);
+	} while (r > RAND_MAX / 256);
 
+	puts("sums");
 	for (i = 0; i < NUM_FILES; ++i)
-		printf("%ld: %ld\n", i, fileCount[i] * 9);
+		printf("%ld: %ld\n", i, fileCount[i] * 3);
 
 	return 0;
 }

@@ -191,60 +191,61 @@ p2write(void *arg)
 
 	fnum = *(int32_t *)arg;
 
-	/* block until queue is not empty */
-	if (pthread_mutex_lock(&mutexes[COND]))
-		err(1, "pthread_mutex_lock");
+	for (;;) {
+		/* block until queue is not empty */
+		if (pthread_mutex_lock(&mutexes[COND]))
+			err(1, "pthread_mutex_lock");
 
-	while (pos[fnum] == 0) {
-		if (pthread_cond_wait(&conds[ENTER], &mutexes[COND]))
-			err(1, "pthread_cond_wait");
-	}
+		while (pos[fnum] == 0) {
+			if (pthread_cond_wait(&conds[ENTER], &mutexes[COND]))
+				err(1, "pthread_cond_wait");
+		}
 
-	if (pthread_mutex_unlock(&mutexes[COND]))
-		err(1, "pthread_mutex_unlock");
+		if (pthread_mutex_unlock(&mutexes[COND]))
+			err(1, "pthread_mutex_unlock");
 
-	/* broadcast write (request critical section) */
-	msg.data = fnum;
-	msg.h.id = id;
-	msg.h.time = p2time;
-	printMsg("broadcast", msg);
-	broadcast(msg);
-
-	/* enter critical section after all servers reply */
-	for (i = 0; i < NUM_SERVERS; ++i) {
-		if (i == id)
-			continue;
-		sem_wait(&srvs[i].sem[fnum]);
-	}
-
-	if (pthread_mutex_lock(&mutexes[FIFO]))
-		err(1, "pthread_mutex_lock");
-
-	/* append to file and empty FIFO (optimization) */
-	for (i = 0; i < pos[fnum]; ++i) {
-		msg = wrReqs[fnum][i];
-		h = msg.h;
-
-		printf("%d %d ", fds[fnum], fnum);
-		printMsg("append to file:", msg);
-		/* append to file */
-		if (dprintf(fds[fnum], "%d %d", h.id, h.time) < 0)
-			err(1, "dprintf");
-
-		/* write deferred reply to client */
+		/* broadcast write (request critical section) */
+		msg.data = fnum;
 		msg.h.id = id;
-		printMsg("deferred reply:", msg);
-		writeSocket(deferred[msg.h.id], msg);
+		msg.h.time = p2time;
+		printMsg("broadcast", msg);
+		broadcast(msg);
+
+		/* enter critical section after all servers reply */
+		for (i = 0; i < NUM_SERVERS; ++i) {
+			if (i == id)
+				continue;
+			sem_wait(&srvs[i].sem[fnum]);
+		}
+
+		if (pthread_mutex_lock(&mutexes[FIFO]))
+			err(1, "pthread_mutex_lock");
+
+		/* append to file and empty FIFO (optimization) */
+		for (i = 0; i < pos[fnum]; ++i) {
+			msg = wrReqs[fnum][i];
+			h = msg.h;
+
+			printf("%d %d ", fds[fnum], fnum);
+			printMsg("append to file:", msg);
+			/* append to file */
+			if (dprintf(fds[fnum], "%d %d", h.id, h.time) < 0)
+				err(1, "dprintf");
+
+			/* write deferred reply to client */
+			printMsg("deferred reply:", msg);
+			writeSocket(deferred[msg.h.id], msg);
+		}
+
+		/* Clear FIFO */
+		pos[fnum] = 0;
+
+		if (pthread_cond_broadcast(&conds[EXIT]))
+			err(1, "pthread_cond_broadcast");
+
+		if (pthread_mutex_unlock(&mutexes[FIFO]))
+			err(1, "pthread_mutex_unlock");
 	}
-
-	/* Clear FIFO */
-	pos[fnum] = 0;
-
-	if (pthread_cond_broadcast(&conds[EXIT]))
-		err(1, "pthread_cond_broadcast");
-
-	if (pthread_mutex_unlock(&mutexes[FIFO]))
-		err(1, "pthread_mutex_unlock");
 
 	return NULL;
 }
