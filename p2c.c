@@ -38,7 +38,7 @@ main(int32_t argc, char * const *argv)
 		if (readSocket(servers[i].sfd, &reply) < sizeof(struct Msg))
 			err(1, "recv");
 		servers[i].numFiles = reply.data;
-		printf("numFiles: %d\n", reply.data);
+		printMsg("reply: ", reply);
 	}
 
 	/* probability of (1 / RAND_MAX) of terminating */
@@ -53,6 +53,7 @@ main(int32_t argc, char * const *argv)
 		req.data = rand() % servers[i].numFiles;
 		req.h.time = p2time++;
 
+		printMsg("req: ", req);
 		if (writeSocket(servers[i].sfd, req) < 0)
 			err(1, "writeSocket");
 

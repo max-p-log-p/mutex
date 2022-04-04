@@ -45,7 +45,8 @@ readSocket(int32_t sockfd, struct Msg *msg)
 	msg->data = recvd->data;
 	msg->h.time = recvd->h.time;
 
-	printf("readSocket %d %d %d\n", recvd->h.id, recvd->data, recvd->h.time);
+	// printMsg("readSocket recvd", *recvd);
+	// printMsg("readSocket msg", *msg);
 
 	return i;
 }
@@ -155,4 +156,10 @@ acceptSocket(int32_t sockfd)
 	}
 
 	return afd;
+}
+
+void
+printMsg(const char *str, struct Msg msg)
+{
+	printf("%s %d %d %d\n", str, msg.h.id, msg.h.time, msg.data);
 }

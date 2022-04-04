@@ -6,12 +6,12 @@
 #define LEN(array) (sizeof(array) / sizeof(array[0]))
 
 /* prevent overflow */
-#if NUM_FILES >= UINT32_MAX - 1
+#if NUM_FILES >= UINT32_MAX
 #error "NUM_FILES is too large"
 #endif
 
-/* all files are in [0, NUM_FILES) */
-enum MsgData { ENQ_REP = NUM_FILES, ENQ_REQ, WRITE_REP };
+/* WRITE_REP, WRITE_REQ in [0, NUM_FILES) */
+enum MsgData { ENQ_REP = NUM_FILES, ENQ_REQ };
 enum Ports { EREQ_PORT, C_WREQ_PORT, S_WREQ_PORT, WREP_PORT, NUM_PORTS };
 
 void usage(char *);
