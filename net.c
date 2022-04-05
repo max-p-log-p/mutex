@@ -8,60 +8,68 @@
 
 #include "net.h"
 
-size_t
-readSocket(int32_t sockfd, struct Msg *msg)
+int32_t
+readMsg(int32_t sockfd, struct Msg *msg)
 {
-	ssize_t nr;
-	size_t i;
+	int64_t nr;
+	uint64_t i;
 	uint8_t buf[sizeof(struct Msg)];
 	struct Msg *recvd;
 
 	for (i = 0; i < sizeof(buf); i += nr) {
-		if ((nr = recv(sockfd, buf + i, sizeof(buf) - i, 0)) > 0)
+		if ((nr = read(sockfd, buf + i, sizeof(buf) - i)) >= 0)
 			continue;
 
 		switch (errno) {
-		case EAGAIN:
-#if EWOULDBLOCK != EAGAIN
+		case EAGAIN: 
+#if EAGAIN != EWOULDBLOCK
 		case EWOULDBLOCK:
 #endif
 		case EINTR:
-			warn("recv failed");
 			nr = 0;
-			break;
+			continue;
 		default:
-			return i;
+			return -1;
 		}
 	}
 
 	recvd = (struct Msg *)buf;
-	/*
-	msg->h.id = ntohl(recvd->h.id);
-	msg->data = ntohl(recvd->data);
-	msg->h.time = ntohl(recvd->h.time);
-	*/
-
-	msg->h.id = recvd->h.id;
+	msg->id = recvd->id;
 	msg->data = recvd->data;
-	msg->h.time = recvd->h.time;
-
-	// printMsg("readSocket recvd", *recvd);
-	// printMsg("readSocket msg", *msg);
-
-	return i;
+	msg->time = recvd->time;
+	// printMsg("recvd:", *recvd);
+	return 0;
 }
 
-ssize_t
-writeSocket(int sockfd, struct Msg req)
+int32_t
+writeMsg(int sockfd, struct Msg msg)
 {
 	/*
-	uint32_t buf[sizeof(struct Msg)/ sizeof(uint32_t)];
+	int64_t nw;
+	uint64_t i;
+	uint8_t buf[sizeof(msg)];
 
-	buf[0] = htonl(req.h.id);
-	buf[1] = htonl(req.h.time);
-	buf[2] = htonl(req.data);
+	buf = &msg;
+
+	for (i = 0; i < sizeof(buf); i += nw) {
+		if ((nw = write(sockfd, buf + i, sizeof(buf) - i)) >= 0)
+			continue;
+
+		switch (errno) {
+		case EAGAIN: 
+#if EAGAIN != EWOULDBLOCK
+		case EWOULDBLOCK:
+#endif
+		case EINTR:
+			nw = 0;
+			continue;
+		default:
+			return -1;
+		}
+	}
+	return 0;
 	*/
-	return send(sockfd, &req, sizeof(req), 0);
+	return write(sockfd, &msg, sizeof(msg)) != sizeof(msg);
 }
 
 /* returns socket file descriptor */
@@ -161,5 +169,5 @@ acceptSocket(int32_t sockfd)
 void
 printMsg(const char *str, struct Msg msg)
 {
-	printf("%s %d %d %d\n", str, msg.h.id, msg.h.time, msg.data);
+	printf("%s %d %d %d\n", str, msg.id, msg.time, msg.data);
 }

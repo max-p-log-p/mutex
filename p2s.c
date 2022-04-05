@@ -18,11 +18,14 @@
 #define FLAGS (O_CREAT|O_WRONLY|O_TRUNC|O_APPEND)
 
 void pthreads_create(struct thread [], void *(*)(void *), size_t);
+void pthreads_join(struct thread [], size_t);
 void broadcast(struct Msg);
+void broadcastLog(struct Msg [], uint32_t);
 void setTime(uint32_t);
 void *enquireReply(void *);
-void *p2write(void *);
-void *invoke(void *);
+void *append(void *);
+void *appendLog(void *);
+void *queue(void *);
 void *count(void *);
 void *writeReply(void *);
 
@@ -64,16 +67,23 @@ main(int32_t argc, char * const *argv)
 	char path[PATH_MAX] = { 0 };
 	struct Msg req;
 
+	struct thread writers[NUM_FILES];
+	struct thread enqRepliers[NUM_CLIENTS];
+	struct thread queuers[NUM_CLIENTS];
+	struct thread loggers[NUM_SERVERS - 1];
+	struct thread counters[NUM_SERVERS - 1];
+	struct thread wrRepliers[NUM_SERVERS - 1];
+
 	if (argc != ARGS_LEN)
 		usage(USAGE_STR);
 
 	/* Get ID */
 	if ((tmpid = strtoul(argv[ID], NULL, 10)) > NUM_SERVERS)
 		errx(1, "id > %d", NUM_SERVERS);
-	id = req.h.id = (uint32_t)tmpid;
+	id = req.id = (uint32_t)tmpid;
 
 	/* Get servers */
-	getHostnames(argv[SERVER_FILE], addrs, LEN(addrs));
+	getHosts(argv[SERVER_FILE], addrs, LEN(addrs));
 
 	if (strlen(argv[PATH]) + sizeof(file) >= sizeof(path))
 		errx(1, "path too long");
@@ -97,122 +107,142 @@ main(int32_t argc, char * const *argv)
 	}
 
 	/* Initialization */
-	for (i = 0; i < NUM_SERVERS - 1; ++i) {
-		for (j = 0; j < NUM_FILES; ++j) {
-			if (sem_init(&srvs[i].sem[j], 0, 0))
-				err(1, "sem_init");
-		}
-	}
-
 	for (i = 0; i < NUM_MUTEXES; ++i)
 		if (pthread_mutex_init(&mutexes[i], NULL))
 			err(1, "pthread_mutex_init");
 
 	for (i = 0; i < NUM_PORTS; ++i)
-		sockets[i] = listenSocket(addrs[id], PORT_STR[i]);
+		lsocks[i] = listenSocket(addrs[id], PORT_STR[i]);
 
 	pthreads_create(enqRepliers, enquireReply, LEN(enqRepliers));
-	pthreads_create(invokers, invoke, LEN(invokers));
-	pthreads_create(writers, p2write, LEN(writers)); /* [12, 16] */
+	pthreads_create(queuers, queue, LEN(queuers));
+	pthreads_create(loggers, appendLog, LEN(loggers));
+	pthreads_create(writers, append, LEN(writers));
 	pthreads_create(counters, count, LEN(counters));
 	pthreads_create(wrRepliers, writeReply, LEN(wrRepliers));
 
-	/* wait for last thread */
+	/* wait for threads */
 	pthreads_join(enqRepliers, LEN(enqRepliers));
-	pthreads_join(invokers, LEN(invokers));
+	pthreads_join(queuers, LEN(queuers));
+	pthreads_join(loggers, LEN(loggers));
 	pthreads_join(writers, LEN(writers));
 	pthreads_join(counters, LEN(counters));
 	pthreads_join(wrRepliers, LEN(wrRepliers));
 
 	/* close sockets */
 	for (i = 0; i < NUM_PORTS; ++i)
-		close(sockets[i]);
+		close(lsocks[i]);
 
 	return 0;
 }
 
-/* reply to enquiries */
 void *
-enquireReply(void *i)
+enquireReply(void *arg)
 {
-	int32_t afd;
+	int32_t afd, tid;
 	struct Msg msg, reply;
 
+	tid = *(int32_t *)arg;
 	reply.data = ENQ_REP;
-	reply.h.id = id;
+	reply.id = id;
 
 	for (;;) {
-		if ((afd = acceptSocket(sockets[EREQ_PORT])) < 0)
-			err(1, "accept: %d", *(int32_t *)i);
-		if (readSocket(afd, &msg) < sizeof(struct Msg))
-			err(1, "recv");
-		/* time is not updated because client time is not used */
+		if ((afd = acceptSocket(lsocks[EREQ_PORT])) < 0)
+			err(1, "accept: %d", tid);
+
+		if (readMsg(afd, &msg))
+			err(1, "recv: %d", tid);
+
 		printMsg("Enquiry from", msg);
-		writeSocket(afd, reply);
+
+		if (writeMsg(afd, reply))
+			err(1, "writeMsg: %d", tid);
+
+		close(afd);
 	}
 
 	return NULL;
 }
 
-/* invoke critical section */
 void *
-invoke(void *i)
+queue(void *arg)
 {
-	int32_t afd;
+	int32_t afd, tid;
 	struct Msg msg;
+	struct Fifo *fifo;
+
+	tid = *(int32_t *)arg;
 
 	for (;;) {
-		if ((afd = acceptSocket(sockets[C_WREQ_PORT])) < 0)
-			err(1, "accept: %d", *(int32_t *)i);
-		if (readSocket(afd, &msg) < sizeof(struct Msg))
-			err(1, "recv");
+		if ((afd = acceptSocket(lsocks[C_WREQ_PORT])) < 0)
+			err(1, "accept: %d", tid);
 
-		/* time is not updated because client time is not used */
-		printMsg("Req", msg);
+		if (readMsg(afd, &msg))
+			err(1, "recv: %d", tid);
 
 		if (msg.data > NUM_FILES)
 			errx(1, "invalid file");
 
-		/* client.num_requests <= 1 */
-		if (pos[msg.data] >= NUM_CLIENTS)
+		fifo = &fifos[msg.data];
+
+		if (fifo->pos >= NUM_CLIENTS)
 			errx(1, "Too many requests");
 
-		deferred[msg.h.id] = afd;
-
-		/* add to queue */
 		if (pthread_mutex_lock(&mutexes[FIFO]))
 			err(1, "pthread_mutex_lock");
 
-		printMsg("add to queue:", msg);
-		wrReqs[msg.data][pos[msg.data]++] = msg;
-		printf("invoke %d %d\n", pos[msg.data], msg.data);
-
-		if (pthread_cond_broadcast(&conds[ENTER]))
-			err(1, "pthread_cond_signal");
+		fifo->msgs[fifo->pos++] = msg;
 
 		if (pthread_mutex_unlock(&mutexes[FIFO]))
 			err(1, "pthread_mutex_unlock");
 
+		printMsg("added to queue:", msg);
+
+		csocks[msg.id] = afd;
+
+		if (pthread_cond_broadcast(&conds[WRITE]))
+			err(1, "pthread_cond_broadcast");
 	}
+
 	return NULL;
 }
 
 void *
-p2write(void *arg)
+append(void *arg)
 {
-	uint32_t i;
+	uint64_t i;
 	int32_t fnum;
-	struct Header h;
-	struct Msg msg;
+	struct Msg msg, req;
+	struct Fifo *fifo;
 
 	fnum = *(int32_t *)arg;
+	fifo = &fifos[fnum];
+
+	req.id = id;
+	req.data = fnum;
 
 	for (;;) {
 		/* block until queue is not empty */
 		if (pthread_mutex_lock(&mutexes[COND]))
 			err(1, "pthread_mutex_lock");
 
-		while (pos[fnum] == 0) {
+		while (fifo->pos == 0) {
+			if (pthread_cond_wait(&conds[WRITE], &mutexes[COND]))
+				err(1, "pthread_cond_wait");
+		}
+
+		if (pthread_mutex_unlock(&mutexes[COND]))
+			err(1, "pthread_mutex_unlock");
+
+		req.time = p2time;
+		printMsg("broadcast", req);
+		broadcast(req);
+
+		/* enter critical section after all servers reply */
+		if (pthread_mutex_lock(&mutexes[COND]))
+			err(1, "pthread_mutex_lock");
+
+		while (numReplies[fnum] != NUM_SERVERS - 1) {
 			if (pthread_cond_wait(&conds[ENTER], &mutexes[COND]))
 				err(1, "pthread_cond_wait");
 		}
@@ -220,47 +250,39 @@ p2write(void *arg)
 		if (pthread_mutex_unlock(&mutexes[COND]))
 			err(1, "pthread_mutex_unlock");
 
-		/* broadcast write (request critical section) */
-		msg.data = fnum;
-		msg.h.id = id;
-		msg.h.time = p2time;
-		printMsg("broadcast", msg);
-		broadcast(msg);
-
-		/* enter critical section after all servers reply */
-		for (i = 0; i < NUM_SERVERS; ++i) {
-			if (i == id)
-				continue;
-			sem_wait(&srvs[i].sem[fnum]);
-		}
+		/* Reset numReplies */
+		numReplies[fnum] = 0;
 
 		if (pthread_mutex_lock(&mutexes[FIFO]))
 			err(1, "pthread_mutex_lock");
 
-		/* append to file and empty FIFO (optimization) */
-		for (i = 0; i < pos[fnum]; ++i) {
-			msg = wrReqs[fnum][i];
-			h = msg.h;
+		/* appends to file from FIFO (optimization) */
+		for (i = 0; i < fifo->pos; ++i) {
+			msg = fifo->msgs[i];
 
-			printf("%d %d ", fds[fnum], fnum);
-			printMsg("append to file:", msg);
-			/* append to file */
-			if (dprintf(fds[fnum], "%d %d\n", h.id, h.time) < 0)
+			if (dprintf(fds[fnum], "%d %d\n", msg.id, msg.time) < 0)
 				err(1, "dprintf");
-
-			/* write deferred reply to client */
-			printMsg("deferred reply:", msg);
-			writeSocket(deferred[msg.h.id], msg);
 		}
 
-		/* Clear FIFO */
-		pos[fnum] = 0;
+		if (pthread_mutex_unlock(&mutexes[FIFO]))
+			err(1, "pthread_mutex_unlock");
+
+		/* send fifo to other servers */
+		broadcastLog(fifo->msgs, fifo->pos);
 
 		if (pthread_cond_broadcast(&conds[EXIT]))
 			err(1, "pthread_cond_broadcast");
 
-		if (pthread_mutex_unlock(&mutexes[FIFO]))
-			err(1, "pthread_mutex_unlock");
+		/* write reply to clients */
+		for (i = 0; i < fifo->pos; ++i) {
+			msg = fifo->msgs[i];
+
+			if (writeMsg(csocks[msg.id], msg))
+				err(1, "writeMsg");
+		}
+
+		/* Clear FIFO */
+		fifo->pos = 0;
 	}
 
 	return NULL;
@@ -268,28 +290,39 @@ p2write(void *arg)
 
 /* Count replies */
 void *
-count(void *i)
+count(void *arg)
 {
-	int32_t afd;
+	int32_t afd, tid;
 	struct Msg msg;
 
+	tid = *(int32_t *)arg;
+
 	for (;;) {
-		if ((afd = acceptSocket(sockets[WREP_PORT])) < 0)
-			err(1, "accept: %d", *(int32_t *)i);
+		if ((afd = acceptSocket(lsocks[WREP_PORT])) < 0)
+			err(1, "accept: %d", tid);
 
-		if (readSocket(afd, &msg) < sizeof(struct Msg))
-			err(1, "recv");
+		if (readMsg(afd, &msg))
+			err(1, "recv: %d", tid);
 
-		setTime(msg.h.time);
+		setTime(msg.time);
 
-		printMsg("Reply Recvd", msg);
+		printMsg("Server reply", msg);
 
 		if (msg.data >= NUM_FILES)
 			errx(1, "invalid file");
 
-		/* assume server sends <= 1 reply */
-		if (sem_post(&srvs[msg.h.id].sem[msg.data]))
-			err(1, "sem_post");
+		if (pthread_mutex_lock(&mutexes[REPLY]))
+			err(1, "pthread_mutex_lock");
+
+		++numReplies[msg.data];
+
+		if (pthread_mutex_unlock(&mutexes[REPLY]))
+			err(1, "pthread_mutex_unlock");
+
+		printf("numReplies %d\n", numReplies[msg.data]);
+
+		if (numReplies[msg.data] == NUM_SERVERS - 1)
+			pthread_cond_broadcast(&conds[ENTER]);
 	}
 
 	return NULL;
@@ -297,28 +330,34 @@ count(void *i)
 
 /* write replies */
 void *
-writeReply(void *i)
+writeReply(void *arg)
 {
-	int32_t afd;
+	int32_t afd, sfd, tid;
 	struct Msg msg;
+	struct Fifo fifo;
+
+	tid = *(int32_t *)arg;
 
 	for (;;) {
-		if ((afd = acceptSocket(sockets[S_WREQ_PORT])) < 0)
-			err(1, "accept: %d", *(int32_t *)i);
-		if (readSocket(afd, &msg) < sizeof(struct Msg))
-			err(1, "recv");
+		if ((afd = acceptSocket(lsocks[S_WREQ_PORT])) < 0)
+			err(1, "accept: %d", tid);
 
-		setTime(msg.h.time);
-		printMsg("Request received", msg);
+		if (readMsg(afd, &msg))
+			err(1, "recv: %d", tid);
+
+		printMsg("Server request", msg);
+
+		setTime(msg.time);
+		fifo = fifos[msg.data];
 
 		/* lower ids have higher priority */
-		if (pos[msg.data] && ((p2time < msg.h.time) ||
-			(p2time == msg.h.time && id < msg.h.id))) {
+		if (fifo.pos && ((p2time < msg.time) ||
+			(p2time == msg.time && id < msg.id))) {
 			/* Defer reply */
 			if (pthread_mutex_lock(&mutexes[COND]))
 				err(1, "pthread_mutex_lock");
 
-			while (pos[msg.data] > 0)
+			while (fifo.pos > 0)
 				if (pthread_cond_wait(&conds[EXIT], &mutexes[COND]))
 					err(1, "pthread_cond_wait");
 
@@ -326,12 +365,51 @@ writeReply(void *i)
 				err(1, "pthread_mutex_unlock");
 		}
 
-		msg.h.id = id;
+		sfd = createSocket(addrs[msg.id], PORT_STR[WREP_PORT], 0);
 
-		if (writeSocket(afd, msg) < 0)
-			err(1, "writeSocket");
+		msg.id = id;
+
+		if (writeMsg(sfd, msg))
+			err(1, "writeMsg");
 
 		printMsg("Reply sent", msg);
+
+		close(sfd);
+	}
+
+	return NULL;
+}
+
+void *
+appendLog(void *arg)
+{
+	int32_t afd, tid;
+	struct Msg msg;
+
+	tid = *(int32_t *)arg;
+
+	for (;;) {
+		if ((afd = acceptSocket(lsocks[QPORT])) < 0)
+			err(1, "accept: %d", tid);
+
+		if (readMsg(afd, &msg))
+			err(1, "recv");
+
+		printMsg("log req:", msg);
+
+		/* append to file */
+		if (dprintf(fds[msg.data], "%d %d\n", msg.id, msg.time) < 0)
+			err(1, "dprintf");
+
+		msg.id = id;
+
+		printMsg("log reply:", msg);
+
+		/* send reply */
+		if (writeMsg(afd, msg))
+			err(1, "writeMsg");
+
+		close(afd);
 	}
 
 	return NULL;
@@ -341,26 +419,45 @@ void
 broadcast(struct Msg req)
 {
 	uint64_t i;
-	struct Msg msg;
+	int32_t sfd;
 
-	for (i = 0; i < NUM_SERVERS; ++i) {
+	for (i = 0; i < LEN(addrs); ++i) {
 		if (i == id)
 			continue;
-		srvs[i].sfd = createSocket(addrs[i], PORT_STR[S_WREQ_PORT], 0);
-		writeSocket(srvs[i].sfd, req);
 
-		if (readSocket(srvs[i].sfd, &msg) < sizeof(struct Msg))
-			err(1, "recv");
+		sfd = createSocket(addrs[i], PORT_STR[S_WREQ_PORT], 0);
 
-		setTime(msg.h.time);
+		if (writeMsg(sfd, req))
+			errx(1, "writeMsg");
 
-		printMsg("Reply Recvd", msg);
+		close(sfd);
+	}
+}
 
-		if (msg.data != req.data)
-			errx(1, "invalid file");
+void
+broadcastLog(struct Msg msgs[], uint32_t numMsgs)
+{
+	uint64_t i, j;
+	int32_t sfd;
+	struct Msg reply;
 
-		/* assume server sends <= 1 reply */
-		if (sem_post(&srvs[msg.h.id].sem[msg.data]))
-			err(1, "sem_post");
+	for (i = 0; i < LEN(addrs); ++i) {
+		if (i == id)
+			continue;
+
+		sfd = createSocket(addrs[i], PORT_STR[QPORT], 0);
+		printf("broadcastLog %s %d\n", addrs[i], sfd);
+
+		for (j = 0; j < numMsgs; ++j) {
+			if (writeMsg(sfd, msgs[j]))
+				errx(1, "writeMsg");
+			printMsg("queue:", msgs[j]);
+
+			if (readMsg(sfd, &reply))
+				errx(1, "readMsg");
+			printMsg("reply:", msgs[j]);
+		}
+
+		close(sfd);
 	}
 }

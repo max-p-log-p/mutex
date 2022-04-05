@@ -1,5 +1,5 @@
 CC = cc
-CFLAGS = -Wall -Wextra -Werror -O2 -fanalyzer
+CFLAGS = -Wall -Wextra -Werror -O2
 
 all: p2c p2s
 

@@ -13,7 +13,7 @@ usage(char *str)
 }
 
 void
-getHostnames(const char *pathname, char s[][HOST_NAME_MAX], size_t len)
+getHosts(const char *pathname, char s[][HOST_NAME_MAX], size_t len)
 {
 	FILE *stream;
 	uint64_t i;
