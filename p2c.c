@@ -46,6 +46,8 @@ main(int32_t argc, char * const *argv)
 	numFiles = reply.data;
 	printMsg("reply:", reply);
 
+	sleep(rand() % PRESLEEP + MIN_PRESLEEP);
+
 	do {
 		r = rand();
 		i = r % NUM_SERVERS;
@@ -57,6 +59,7 @@ main(int32_t argc, char * const *argv)
 		req.data = rand() % numFiles;
 		req.time = ++p2time;
 
+		printf("server %ld ", i);
 		printMsg("req:", req);
 
 		if (writeMsg(sfds[i], req))
@@ -67,7 +70,7 @@ main(int32_t argc, char * const *argv)
 
 		printMsg("reply:", reply);
 
-		sleep(rand() % MAX_SLEEP);
+		usleep(rand() % MAX_SLEEP);
 	} while (r > RAND_MAX / STOP_PROB);
 
 	/* close sockets */

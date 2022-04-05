@@ -3,8 +3,8 @@
 #include "proc.h"
 
 enum Args { PROG_NAME = 0, ID, PATH, SERVER_FILE, ARGS_LEN };
-enum Mutexes { TIME, FIFO, COND, REPLY, NUM_MUTEXES };
-enum Conds { ENTER, WRITE, EXIT, NUM_CONDS };
+enum Mutexes { TIME, FIFO, _FILE, COND, EMPTY, SOCK, REPLY, NUM_MUTEXES };
+enum Conds { ENTER, WRITE, EXIT, _EMPTY, NUM_CONDS };
 
 #define USAGE_STR "p2s id path serverFile"
 
