@@ -22,6 +22,7 @@ void pthreads_join(struct thread [], size_t);
 void broadcast(struct Msg);
 void broadcastLog(struct Msg [], uint32_t);
 void setTime(uint32_t);
+void setMaxTime(uint32_t);
 void *enquireReply(void *);
 void *append(void *);
 void *appendLog(void *);
@@ -56,6 +57,14 @@ setTime(uint32_t time)
 	pthread_mutex_lock(&mutexes[TIME]);
 	p2time = (time > p2time) ? time + 1 : p2time + 1;
 	pthread_mutex_unlock(&mutexes[TIME]);
+}
+
+void
+setMaxTime(uint32_t time)
+{
+	pthread_mutex_lock(&mutexes[MAX]);
+	maxTime = (time > maxTime) ? time : maxTime;
+	pthread_mutex_unlock(&mutexes[MAX]);
 }
 
 int32_t
@@ -198,16 +207,6 @@ queue(void *arg)
 
 		printMsg("added to queue:", msg);
 
-		if (pthread_mutex_unlock(&mutexes[SOCK]))
-			err(1, "pthread_mutex_unlock");
-
-		csocks[msg.id] = afd;
-
-		if (pthread_mutex_unlock(&mutexes[SOCK]))
-			err(1, "pthread_mutex_unlock");
-
-		printf("csocks[%d] = %d\n", msg.id, afd);
-
 		if (pthread_cond_broadcast(&conds[WRITE]))
 			err(1, "pthread_cond_broadcast");
 
@@ -215,13 +214,16 @@ queue(void *arg)
 		if (pthread_mutex_lock(&mutexes[EMPTY]))
 			err(1, "pthread_mutex_lock");
 
-		while (fifo->pos != 0) {
-			if (pthread_cond_wait(&conds[_EMPTY], &mutexes[EMPTY]))
+		while (fifo->pos > 0) {
+			if (pthread_cond_wait(&conds[EXIT], &mutexes[EMPTY]))
 				err(1, "pthread_cond_wait");
 		}
 
 		if (pthread_mutex_unlock(&mutexes[EMPTY]))
 			err(1, "pthread_mutex_unlock");
+
+		if (writeMsg(afd, msg))
+			err(1, "writeMsg: %d", tid);
 	}
 
 	return NULL;
@@ -254,51 +256,44 @@ append(void *arg)
 		if (pthread_mutex_unlock(&mutexes[COND]))
 			err(1, "pthread_mutex_unlock");
 
+		setTime(maxTime);
 		req.time = p2time;
 		printMsg("broadcast", req);
 		broadcast(req);
 
 		/* enter critical section after all servers reply */
-		if (pthread_mutex_lock(&mutexes[COND]))
+		if (pthread_mutex_lock(&mutexes[ENTER]))
 			err(1, "pthread_mutex_lock");
 
 		while (numReplies[fnum] != NUM_SERVERS - 1) {
-			if (pthread_cond_wait(&conds[ENTER], &mutexes[COND]))
+			if (pthread_cond_wait(&conds[_ENTER], &mutexes[ENTER]))
 				err(1, "pthread_cond_wait");
 		}
 
-		if (pthread_mutex_unlock(&mutexes[COND]))
+		if (pthread_mutex_unlock(&mutexes[ENTER]))
 			err(1, "pthread_mutex_unlock");
 
 		/* Reset numReplies */
 		numReplies[fnum] = 0;
 
-		if (pthread_mutex_lock(&mutexes[FIFO]))
-			err(1, "pthread_mutex_lock");
-		
 		/* appends to file from FIFO (optimization) */
 		for (i = 0; i < fifo->pos; ++i) {
 			msg = fifo->msgs[i];
 
 			printf("write %d %d %d\n", fnum, msg.id, msg.time);
 
+			if (pthread_mutex_lock(&mutexes[_FILE]))
+				err(1, "pthread_mutex_lock");
+
 			if (dprintf(fds[fnum], "%d %d\n", msg.id, msg.time) < 0)
 				err(1, "dprintf");
-		}
 
-		if (pthread_mutex_unlock(&mutexes[FIFO]))
-			err(1, "pthread_mutex_unlock");
+			if (pthread_mutex_unlock(&mutexes[_FILE]))
+				err(1, "pthread_mutex_unlock");
+		}
 
 		/* send fifo to other servers */
 		broadcastLog(fifo->msgs, fifo->pos);
-
-		/* write reply to clients */
-		for (i = 0; i < fifo->pos; ++i) {
-			msg = fifo->msgs[i];
-
-			if (writeMsg(csocks[msg.id], msg))
-				err(1, "writeMsg: %d", fnum);
-		}
 
 		puts("Clear FIFO");
 
@@ -311,13 +306,19 @@ append(void *arg)
 		if (pthread_mutex_unlock(&mutexes[FIFO]))
 			err(1, "pthread_mutex_unlock");
 
-		/* FIFO is now empty */
-		if (pthread_cond_broadcast(&conds[_EMPTY]))
-			err(1, "pthread_cond_broadcast");
+		if (pthread_mutex_lock(&mutexes[EMPTY]))
+			err(1, "pthread_mutex_lock");
+		if (pthread_mutex_lock(&mutexes[DEFER]))
+			err(1, "pthread_mutex_lock");
 
 		/* send deferred replies */
 		if (pthread_cond_broadcast(&conds[EXIT]))
 			err(1, "pthread_cond_broadcast");
+
+		if (pthread_mutex_unlock(&mutexes[DEFER]))
+			err(1, "pthread_mutex_unlock");
+		if (pthread_mutex_unlock(&mutexes[EMPTY]))
+			err(1, "pthread_mutex_unlock");
 	}
 
 	return NULL;
@@ -339,8 +340,6 @@ count(void *arg)
 		if (readMsg(afd, &msg))
 			err(1, "recv: %d", tid);
 
-		setTime(msg.time);
-
 		printMsg("Server reply", msg);
 
 		if (msg.data >= NUM_FILES)
@@ -357,7 +356,7 @@ count(void *arg)
 		printf("numReplies %d\n", numReplies[msg.data]);
 
 		if (numReplies[msg.data] == NUM_SERVERS - 1)
-			pthread_cond_broadcast(&conds[ENTER]);
+			pthread_cond_broadcast(&conds[_ENTER]);
 	}
 
 	return NULL;
@@ -369,7 +368,7 @@ writeReply(void *arg)
 {
 	int32_t afd, sfd, tid;
 	struct Msg msg;
-	struct Fifo fifo;
+	struct Fifo *fifo;
 
 	tid = *(int32_t *)arg;
 
@@ -382,21 +381,22 @@ writeReply(void *arg)
 
 		printMsg("Server request", msg);
 
-		setTime(msg.time);
-		fifo = fifos[msg.data];
+		setMaxTime(msg.time);
+		fifo = fifos + msg.data;
 
 		/* lower ids have higher priority */
-		if (fifo.pos && ((p2time < msg.time) ||
+		if (fifo->pos && ((p2time < msg.time) ||
 			(p2time == msg.time && id < msg.id))) {
 			/* Defer reply */
-			if (pthread_mutex_lock(&mutexes[COND]))
+			if (pthread_mutex_lock(&mutexes[DEFER]))
 				err(1, "pthread_mutex_lock");
 
-			while (fifo.pos > 0)
-				if (pthread_cond_wait(&conds[EXIT], &mutexes[COND]))
+			while (fifo->pos > 0) {
+				if (pthread_cond_wait(&conds[EXIT], &mutexes[DEFER]))
 					err(1, "pthread_cond_wait");
+			}
 
-			if (pthread_mutex_unlock(&mutexes[COND]))
+			if (pthread_mutex_unlock(&mutexes[DEFER]))
 				err(1, "pthread_mutex_unlock");
 		}
 
@@ -484,11 +484,11 @@ broadcastLog(struct Msg msgs[], uint32_t numMsgs)
 		if (i == id)
 			continue;
 
-		sfd = createSocket(addrs[i], PORT_STR[QPORT], 0);
-
-		printf("broadcastLog %s %d %d\n", addrs[i], sfd, numMsgs);
+		printf("broadcastLog %s %d\n", addrs[i], numMsgs);
 
 		for (j = 0; j < numMsgs; ++j) {
+			sfd = createSocket(addrs[i], PORT_STR[QPORT], 0);
+
 			if (writeMsg(sfd, msgs[j]))
 				err(1, "writeMsg: %ld", i);
 
@@ -498,9 +498,9 @@ broadcastLog(struct Msg msgs[], uint32_t numMsgs)
 				errx(1, "readMsg");
 
 			printMsg("reply:", msgs[j]);
-		}
 
-		close(sfd);
+			close(sfd);
+		}
 	}
 	puts("broadcastLog done");
 }
