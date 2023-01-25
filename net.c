@@ -44,31 +44,6 @@ readMsg(int32_t sockfd, struct Msg *msg)
 int32_t
 writeMsg(int sockfd, struct Msg msg)
 {
-	/*
-	int64_t nw;
-	uint64_t i;
-	uint8_t buf[sizeof(msg)];
-
-	buf = &msg;
-
-	for (i = 0; i < sizeof(buf); i += nw) {
-		if ((nw = write(sockfd, buf + i, sizeof(buf) - i)) >= 0)
-			continue;
-
-		switch (errno) {
-		case EAGAIN: 
-#if EAGAIN != EWOULDBLOCK
-		case EWOULDBLOCK:
-#endif
-		case EINTR:
-			nw = 0;
-			continue;
-		default:
-			return -1;
-		}
-	}
-	return 0;
-	*/
 	return write(sockfd, &msg, sizeof(msg)) != sizeof(msg);
 }
 
