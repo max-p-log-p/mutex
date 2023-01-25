@@ -1,7 +1,7 @@
 #!/bin/sh
 NUM_SERVERS=2
 NUM_CLIENTS=5
-ROOT_DIR="$HOME/p2"
+ROOT_DIR="./p2"
 
 if [ "$1" = "-c" ]; then
     for ((i = 1; i < $NUM_SERVERS; ++i)) do diff -s "$ROOT_DIR/0" "$ROOT_DIR/$i"; done
