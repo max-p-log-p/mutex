@@ -5,24 +5,16 @@ $ make
 
 Testing
 -------
-Create a directory in $HOME.
+Create a file with NUM_SERVERS hostnames. 
 
-$ mkdir ~/p2/
+NUM_SERVERS is set by default to 2 in proc.h and 2 in test.sh.
 
-Create a file with at most 3 server hostnames.
+// example ips
+10.159.191.196
+127.0.0.1
 
-// ips
-dc01.utdallas.edu
-dc02.utdallas.edu
-dc03.utdallas.edu
+Run `./test.sh` for testing and `./test.sh -c` to check for correctness. 
 
-Execute p2s with the id as the line number of the hostname of the current system.
+test.sh will create a subdirectory in ROOT_DIR.
 
-For dc01.utdallas.edu:
-
-$ ./p2s 0 ~/p2/0 ips
-
-Execute p2c on different machines with the id as any number between [0, 4].
-No client should share an id.
-
-$ ./p2c 0 ips
+The files in the subdirectories of ROOT_DIR should be identical after the program halts.

@@ -1,12 +1,18 @@
 #!/bin/sh
-NUM_SERVERS=3
+NUM_SERVERS=2
 NUM_CLIENTS=5
 ROOT_DIR="$HOME/p2"
 
-killall p2s p2c 2>/dev/null
+if [ "$1" = "-c" ]; then
+    for ((i = 1; i < $NUM_SERVERS; ++i)) do diff -s "$ROOT_DIR/0" "$ROOT_DIR/$i"; done
+else
+    mkdir -p "$ROOT_DIR"
 
-for ((i = 0; i < $NUM_SERVERS; ++i)); do ./p2s "$i" "$ROOT_DIR/$i/" ips & done
+    killall p2s p2c 2>/dev/null
 
-sleep 1
+    for ((i = 0; i < $NUM_SERVERS; ++i)); do ./p2s "$i" "$ROOT_DIR/$i/" ips & done
 
-for ((i = 0; i < $NUM_CLIENTS; ++i)); do ./p2c "$i" ips & sleep $i; done
+    sleep 1
+
+    for ((i = 0; i < $NUM_CLIENTS; ++i)); do ./p2c "$i" ips & sleep $i; done
+fi

@@ -1,7 +1,7 @@
 #include <limits.h>
 #include <stdint.h>
 
-#define NUM_SERVERS 3
+#define NUM_SERVERS 2
 #define NUM_CLIENTS 5
 #define NUM_FILES NUM_CLIENTS
 #define LEN(array) (sizeof(array) / sizeof(array[0]))

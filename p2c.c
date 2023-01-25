@@ -44,7 +44,7 @@ main(int32_t argc, char * const *argv)
 		err(1, "recv");
 
 	numFiles = reply.data;
-	printMsg("reply:", reply);
+	// printMsg("reply:", reply);
 
 	sleep(rand() % PRESLEEP + MIN_PRESLEEP);
 
@@ -59,8 +59,8 @@ main(int32_t argc, char * const *argv)
 		req.data = rand() % numFiles;
 		req.time = ++p2time;
 
-		printf("server %ld ", i);
-		printMsg("req:", req);
+		// printf("server %ld ", i);
+		// printMsg("req:", req);
 
 		if (writeMsg(sfds[i], req))
 			err(1, "writeMsg");
@@ -68,7 +68,7 @@ main(int32_t argc, char * const *argv)
 		if (readMsg(sfds[i], &reply))
 			err(1, "recv");
 
-		printMsg("reply:", reply);
+		// printMsg("reply:", reply);
 
 		usleep(rand() % MAX_SLEEP);
 	} while (r > RAND_MAX / STOP_PROB);

@@ -162,7 +162,7 @@ enquireReply(void *arg)
 		if (readMsg(afd, &msg))
 			err(1, "recv: %d", tid);
 
-		printMsg("Enquiry from", msg);
+		// printMsg("Enquiry from", msg);
 
 		if (writeMsg(afd, reply))
 			err(1, "writeMsg: %d", tid);
@@ -205,7 +205,7 @@ queue(void *arg)
 		if (pthread_mutex_unlock(&mutexes[FIFO]))
 			err(1, "pthread_mutex_unlock");
 
-		printMsg("added to queue:", msg);
+		// printMsg("added to queue:", msg);
 
 		if (pthread_cond_broadcast(&conds[WRITE]))
 			err(1, "pthread_cond_broadcast");
@@ -258,7 +258,7 @@ append(void *arg)
 
 		setTime(maxTime);
 		req.time = p2time;
-		printMsg("broadcast", req);
+		// printMsg("broadcast", req);
 		broadcast(req);
 
 		/* enter critical section after all servers reply */
@@ -280,7 +280,7 @@ append(void *arg)
 		for (i = 0; i < fifo->pos; ++i) {
 			msg = fifo->msgs[i];
 
-			printf("write %d %d %d\n", fnum, msg.id, msg.time);
+			// printf("write %d %d %d\n", fnum, msg.id, msg.time);
 
 			if (pthread_mutex_lock(&mutexes[_FILE]))
 				err(1, "pthread_mutex_lock");
@@ -295,7 +295,7 @@ append(void *arg)
 		/* send fifo to other servers */
 		broadcastLog(fifo->msgs, fifo->pos);
 
-		puts("Clear FIFO");
+		// puts("Clear FIFO");
 
 		if (pthread_mutex_lock(&mutexes[FIFO]))
 			err(1, "pthread_mutex_lock");
@@ -340,7 +340,7 @@ count(void *arg)
 		if (readMsg(afd, &msg))
 			err(1, "recv: %d", tid);
 
-		printMsg("Server reply", msg);
+		// printMsg("Server reply", msg);
 
 		if (msg.data >= NUM_FILES)
 			errx(1, "invalid file");
@@ -353,7 +353,7 @@ count(void *arg)
 		if (pthread_mutex_unlock(&mutexes[REPLY]))
 			err(1, "pthread_mutex_unlock");
 
-		printf("numReplies %d\n", numReplies[msg.data]);
+		// printf("numReplies %d\n", numReplies[msg.data]);
 
 		if (numReplies[msg.data] == NUM_SERVERS - 1)
 			pthread_cond_broadcast(&conds[_ENTER]);
@@ -379,7 +379,7 @@ writeReply(void *arg)
 		if (readMsg(afd, &msg))
 			err(1, "recv: %d", tid);
 
-		printMsg("Server request", msg);
+		// printMsg("Server request", msg);
 
 		setMaxTime(msg.time);
 		fifo = fifos + msg.data;
@@ -407,7 +407,7 @@ writeReply(void *arg)
 		if (writeMsg(sfd, msg))
 			err(1, "writeMsg");
 
-		printMsg("Reply sent", msg);
+		// printMsg("Reply sent", msg);
 
 		close(sfd);
 	}
@@ -430,7 +430,7 @@ appendLog(void *arg)
 		if (readMsg(afd, &msg))
 			err(1, "recv");
 
-		printMsg("log req:", msg);
+		// printMsg("log req:", msg);
 
 		if (pthread_mutex_lock(&mutexes[_FILE]))
 			err(1, "pthread_mutex_lock");
@@ -444,7 +444,7 @@ appendLog(void *arg)
 
 		msg.id = id;
 
-		printMsg("log reply:", msg);
+		// printMsg("log reply:", msg);
 
 		/* send reply */
 		if (writeMsg(afd, msg))
@@ -484,7 +484,7 @@ broadcastLog(struct Msg msgs[], uint32_t numMsgs)
 		if (i == id)
 			continue;
 
-		printf("broadcastLog %s %d\n", addrs[i], numMsgs);
+		// printf("broadcastLog %s %d\n", addrs[i], numMsgs);
 
 		for (j = 0; j < numMsgs; ++j) {
 			sfd = createSocket(addrs[i], PORT_STR[QPORT], 0);
@@ -502,5 +502,5 @@ broadcastLog(struct Msg msgs[], uint32_t numMsgs)
 			close(sfd);
 		}
 	}
-	puts("broadcastLog done");
+	// puts("broadcastLog done");
 }
